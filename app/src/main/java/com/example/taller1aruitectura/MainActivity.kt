@@ -15,6 +15,11 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.example.taller1aruitectura.Sensor.AccelerometerData
+import com.example.taller1aruitectura.Sensor.GyroscopeData
+import com.example.taller1aruitectura.Sensor.LocationData
+import com.example.taller1aruitectura.Sensor.SensorServ
+import com.example.taller1aruitectura.Sensor.TipoSensor
 import com.example.taller1aruitectura.databinding.ActivityMainBinding
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.Granularity
@@ -122,6 +127,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
                 p0.locations.forEach{ location ->
                     Log.i("localizaciones desde el movil", "location: $location")
+                    val data = LocationData(location.latitude, location.longitude)
+                    val newSensor = SensorServ(TipoSensor.LOCALIZACION, data)
+                    Log.i(newSensor.tipo, "${newSensor.valor}")
                 }
 
         }
@@ -131,11 +139,15 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     override fun onSensorChanged(event: SensorEvent?) {
 
         if(event?.sensor?.type == Sensor.TYPE_ACCELEROMETER){
-            Log.i("sensor acelerometro", "${event.values}")
+            val data = AccelerometerData(event.values)
+            var newSensor = SensorServ(TipoSensor.ACELOMETRO, data)
+            Log.i(newSensor.tipo, "${newSensor.valor}")
         }
 
         if(event?.sensor?.type == Sensor.TYPE_GYROSCOPE){
-            Log.i("sensor giroscopio", "${event.values}")
+            val data = GyroscopeData(event.values)
+            var newSensor = SensorServ(TipoSensor.GIROSCOPIO, data)
+            Log.i(newSensor.tipo, "${newSensor.valor}")
         }
 
     }
