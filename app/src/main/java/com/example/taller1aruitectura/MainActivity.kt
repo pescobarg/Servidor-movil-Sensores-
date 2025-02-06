@@ -39,6 +39,10 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     private lateinit var giroscopio: Sensor
     private lateinit var locationManager: LocationManager
 
+    private var ultimoEnvioAcelerometro: Long = 0
+    private var ultimoEnvioGiroscopio: Long = 0
+    private var ultimoEnvioLocalizacion: Long = 0
+
     private var socket: Socket? = null
     private var Websocket: Socket? = null
 
@@ -81,18 +85,18 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
 
     private fun iniciarGPS() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            Log.i("GPS", "Iniciando actualizaciones de ubicación")
+            Log.i("GPS", "Iniciando actualizaciones de ubicacion")
             locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 1f, this)
 
             // Obtener la ultima ubicacion conocida si existe
             val ultimaUbicacion: Location? = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
             if (ultimaUbicacion != null) {
-                Log.i("GPS", "Última ubicación conocida - Lat: ${ultimaUbicacion.latitude}, Lng: ${ultimaUbicacion.longitude}, Alt: ${ultimaUbicacion.altitude}, Vel: ${ultimaUbicacion.speed}")
+                Log.i("GPS", "Ultima ubicacion conocida - Lat: ${ultimaUbicacion.latitude}, Lng: ${ultimaUbicacion.longitude}, Alt: ${ultimaUbicacion.altitude}, Vel: ${ultimaUbicacion.speed}")
             } else {
-                Log.i("GPS", "No hay última ubicación conocida disponible")
+                Log.i("GPS", "No hay última ubicacion conocida disponible")
             }
         } else {
-            Log.e("GPS", "Permisos de ubicación no concedidos")
+            Log.e("GPS", "Permisos de ubicacion no concedidos")
         }
     }
 
@@ -120,15 +124,15 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             Websocket?.connect()
 
             Websocket?.on(Socket.EVENT_CONNECT) {
-                Log.i("SOCKET", "Conectado al servidor de sockets")
+                Log.i("WEBSOCKET", "Conectado al servidor de sockets")
             }
 
             Websocket?.on("giroscopio_recibido") { args ->
-                Log.i("SOCKET", "Respuesta del servidor: ${args[0]}")
+                Log.i("WEBSOCKET", "Respuesta del servidor: ${args[0]}")
             }
 
         } catch (e: Exception) {
-            Log.e("SOCKET", "Error al conectar al servidor de sockets", e)
+            Log.e("WEBSOCKET", "Error al conectar al servidor de sockets", e)
         }
     }
 
@@ -146,31 +150,53 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
+        val tiempoActual = System.currentTimeMillis() // Tiempo actual en milisegundos
+
         when (event?.sensor?.type) {
             Sensor.TYPE_ACCELEROMETER -> {
-                enviarDatosHTTP("ACELEROMETRO", mapOf("X" to event.values[0], "Y" to event.values[1], "Z" to event.values[2]))
-            }
-            Sensor.TYPE_GYROSCOPE -> {
-                val giroData = JSONObject()
-                giroData.put("X", event.values[0])
-                giroData.put("Y", event.values[1])
-                giroData.put("Z", event.values[2])
+                if (tiempoActual - ultimoEnvioAcelerometro >= 5000) {  // 5 segundos
+                    enviarDatosHTTP("ACELEROMETRO", mapOf("X" to event.values[0], "Y" to event.values[1], "Z" to event.values[2], "timestamp" to tiempoActual))
 
-                Websocket?.emit("enviar_giroscopio", giroData)
-                Log.i("Giroscopio", "Datos enviados: X=${event.values[0]}, Y=${event.values[1]}, Z=${event.values[2]}")
+
+                    ultimoEnvioAcelerometro = tiempoActual
+                }
+            }
+
+            Sensor.TYPE_GYROSCOPE -> {
+                if (tiempoActual - ultimoEnvioGiroscopio >= 5000) {  // 5 segundos
+                    val inicioTiempo = System.nanoTime()
+
+                    val giroData = JSONObject().apply {
+                        put("X", event.values[0])
+                        put("Y", event.values[1])
+                        put("Z", event.values[2])
+                        put("timestamp", tiempoActual)
+                    }
+
+                    Websocket?.emit("enviar_giroscopio", giroData)
+
+                    val finTiempo = System.nanoTime()
+                    val tiempoEjecucion = (finTiempo - inicioTiempo) / 1_000_000.0
+
+                    Log.i("WEBSOCKET", "Datos enviados: X=${event.values[0]}, Y=${event.values[1]}, Z=${event.values[2]}, Timestamp=$tiempoActual")
+                    Log.i("WEBSOCKET", "Tiempo de ejecución local: $tiempoEjecucion ms")
+
+                    ultimoEnvioGiroscopio = tiempoActual
+                }
             }
         }
     }
 
+
     private fun enviarDatosHTTP(tipo: String, datos: Map<String, Any>) {
         val payload = SensorDataPayload(tipo, datos)
 
-        val tiempoInicio = System.currentTimeMillis()
+        val tiempoInicio = System.nanoTime()
 
         RetrofitClient.instance.sendSensorData(payload).enqueue(object : Callback<Void> {
             override fun onResponse(call: Call<Void>, response: Response<Void>) {
-                val tiempoFin = System.currentTimeMillis()
-                val tiempoRespuesta = tiempoFin - tiempoInicio
+                val tiempoFin = System.nanoTime()
+                val tiempoRespuesta = (tiempoFin - tiempoInicio) / 1_000_000.0
 
                 if (response.isSuccessful) {
                     Log.i("HTTP", "Datos enviados correctamente en ${tiempoRespuesta}ms")
@@ -180,21 +206,32 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             }
 
             override fun onFailure(call: Call<Void>, t: Throwable) {
-                val tiempoFin = System.currentTimeMillis()
-                val tiempoRespuesta = tiempoFin - tiempoInicio
+                val tiempoFin = System.nanoTime()
+                val tiempoRespuesta = (tiempoFin - tiempoInicio) / 1_000_000.0
+
                 Log.e("HTTP", "Fallo en la conexión: ${t.message} - Tiempo: ${tiempoRespuesta}ms")
             }
         })
     }
 
-    override fun onLocationChanged(location: Location) {
-        val locationData = JSONObject()
-        locationData.put("lat", location.latitude)
-        locationData.put("lng", location.longitude)
-        locationData.put("alt", location.altitude)
-        locationData.put("vel", location.speed)
 
-        socket?.emit("enviar_localizacion", locationData)
+    override fun onLocationChanged(location: Location) {
+        val tiempoActual = System.currentTimeMillis()
+
+        if (tiempoActual - ultimoEnvioLocalizacion >= 5000) {
+            val locationData = JSONObject().apply {
+                put("lat", location.latitude)
+                put("lng", location.longitude)
+                put("alt", location.altitude)
+                put("vel", location.speed)
+                put("timestamp", tiempoActual)
+            }
+
+            socket?.emit("enviar_localizacion", locationData)
+            Log.i("Localización", "Datos enviados: Lat=${location.latitude}, Lng=${location.longitude}, Alt=${location.altitude}, Vel=${location.speed}, Timestamp=$tiempoActual")
+
+            ultimoEnvioLocalizacion = tiempoActual
+        }
     }
 
 
@@ -206,7 +243,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         if (requestCode == 1 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             iniciarGPS()
         } else {
-            Log.e("GPS", "Permiso de ubicación denegado")
+            Log.e("GPS", "Permiso de ubicacion denegado")
         }
     }
 
