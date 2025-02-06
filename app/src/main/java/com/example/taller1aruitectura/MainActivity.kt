@@ -23,23 +23,32 @@ import com.example.taller1aruitectura.databinding.ActivityMainBinding
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
+import io.socket.client.IO
+import io.socket.client.Socket
+import org.json.JSONObject
+import com.example.taller1aruitectura.Constantes.Companion.URL_SOCKETS
+import com.example.taller1aruitectura.Constantes.Companion.URL_WEB
+
+
 
 class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var sensorManager: SensorManager
-    private lateinit var acelometro: Sensor
+    private lateinit var acelerometro: Sensor
     private lateinit var giroscopio: Sensor
     private lateinit var locationManager: LocationManager
-    private var odometro: Sensor? = null // Puede ser null si el dispositivo no lo tiene
-    private var odometroDisponible = false
 
-    private var alerts: Alerts = Alerts(this)
+    private var socket: Socket? = null
+    private var Websocket: Socket? = null
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         binding = ActivityMainBinding.inflate(layoutInflater)
+        iniciarSocket()
+        iniciarWebSocket()
         setContentView(binding.root)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -51,28 +60,18 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
         try {
-            acelometro = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: throw SensorNotAvailableException("Accelerometer is not available")
+            acelerometro = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: throw SensorNotAvailableException("Accelerometer no disponible")
         } catch (e: SensorNotAvailableException) {
-            Log.e("ERROR SENSOR", "Acelerómetro no disponible")
+            Log.e("ERROR SENSOR", "Acelerometro no disponible")
         }
 
         try {
-            giroscopio = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: throw SensorNotAvailableException("Gyroscope is not available")
+            giroscopio = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE) ?: throw SensorNotAvailableException("Giroscopio no disponible")
         } catch (e: SensorNotAvailableException) {
             Log.e("ERROR SENSOR", "Giroscopio no disponible")
         }
 
-        try {
-            odometro = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-            odometroDisponible = odometro != null
-            if (!odometroDisponible) {
-                throw SensorNotAvailableException("Odometer is not available")
-            }
-        } catch (e: SensorNotAvailableException) {
-            Log.e("ODOMETRO", "El sensor de odómetro no está disponible en este dispositivo")
-        }
 
-        // Pedir permisos de ubicación si no están concedidos
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 1)
         } else {
@@ -85,7 +84,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
             Log.i("GPS", "Iniciando actualizaciones de ubicación")
             locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 1f, this)
 
-            // Obtener la última ubicación conocida si existe
+            // Obtener la ultima ubicacion conocida si existe
             val ultimaUbicacion: Location? = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
             if (ultimaUbicacion != null) {
                 Log.i("GPS", "Última ubicación conocida - Lat: ${ultimaUbicacion.latitude}, Lng: ${ultimaUbicacion.longitude}, Alt: ${ultimaUbicacion.altitude}, Vel: ${ultimaUbicacion.speed}")
@@ -97,58 +96,107 @@ class MainActivity : AppCompatActivity(), SensorEventListener, LocationListener 
         }
     }
 
+    private fun iniciarSocket(){
+        try {
+            socket = IO.socket(URL_SOCKETS)
+            socket?.connect()
+
+            socket?.on(Socket.EVENT_CONNECT) {
+                Log.i("SOCKET", "Conectado al servidor de sockets")
+            }
+
+            socket?.on("localizacion_recibida") { args ->
+                Log.i("SOCKET", "Respuesta del servidor: ${args[0]}")
+            }
+
+        } catch (e: Exception) {
+            Log.e("SOCKET", "Error al conectar al servidor de sockets", e)
+        }
+    }
+
+    private fun iniciarWebSocket(){
+        try {
+            Websocket = IO.socket(URL_WEB)
+            Websocket?.connect()
+
+            Websocket?.on(Socket.EVENT_CONNECT) {
+                Log.i("SOCKET", "Conectado al servidor de sockets")
+            }
+
+            Websocket?.on("giroscopio_recibido") { args ->
+                Log.i("SOCKET", "Respuesta del servidor: ${args[0]}")
+            }
+
+        } catch (e: Exception) {
+            Log.e("SOCKET", "Error al conectar al servidor de sockets", e)
+        }
+    }
+
+
     override fun onResume() {
         super.onResume()
-        sensorManager.registerListener(this, acelometro, SensorManager.SENSOR_DELAY_NORMAL)
+        sensorManager.registerListener(this, acelerometro, SensorManager.SENSOR_DELAY_NORMAL)
         sensorManager.registerListener(this, giroscopio, SensorManager.SENSOR_DELAY_NORMAL)
-        if (odometroDisponible) {
-            sensorManager.registerListener(this, odometro, SensorManager.SENSOR_DELAY_NORMAL)
-        }
     }
 
     override fun onPause() {
         super.onPause()
-        sensorManager.unregisterListener(this, acelometro)
+        sensorManager.unregisterListener(this, acelerometro)
         sensorManager.unregisterListener(this, giroscopio)
-        if (odometroDisponible) {
-            sensorManager.unregisterListener(this, odometro)
-        }
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
         when (event?.sensor?.type) {
             Sensor.TYPE_ACCELEROMETER -> {
-                enviarDatos("ACELEROMETRO", mapOf("X" to event.values[0], "Y" to event.values[1], "Z" to event.values[2]))
+                enviarDatosHTTP("ACELEROMETRO", mapOf("X" to event.values[0], "Y" to event.values[1], "Z" to event.values[2]))
             }
             Sensor.TYPE_GYROSCOPE -> {
-                enviarDatos("GIROSCOPIO", mapOf("X" to event.values[0], "Y" to event.values[1], "Z" to event.values[2]))
-            }
-            Sensor.TYPE_STEP_COUNTER -> {
-                enviarDatos("ODOMETRO", mapOf("pasos" to event.values[0]))
+                val giroData = JSONObject()
+                giroData.put("X", event.values[0])
+                giroData.put("Y", event.values[1])
+                giroData.put("Z", event.values[2])
+
+                Websocket?.emit("enviar_giroscopio", giroData)
+                Log.i("Giroscopio", "Datos enviados: X=${event.values[0]}, Y=${event.values[1]}, Z=${event.values[2]}")
             }
         }
     }
-    private fun enviarDatos(tipo: String, datos: Map<String, Any>) {
+
+    private fun enviarDatosHTTP(tipo: String, datos: Map<String, Any>) {
         val payload = SensorDataPayload(tipo, datos)
+
+        val tiempoInicio = System.currentTimeMillis()
 
         RetrofitClient.instance.sendSensorData(payload).enqueue(object : Callback<Void> {
             override fun onResponse(call: Call<Void>, response: Response<Void>) {
+                val tiempoFin = System.currentTimeMillis()
+                val tiempoRespuesta = tiempoFin - tiempoInicio
+
                 if (response.isSuccessful) {
-                    Log.i("HTTP", "Datos enviados correctamente")
+                    Log.i("HTTP", "Datos enviados correctamente en ${tiempoRespuesta}ms")
                 } else {
-                    Log.e("HTTP", "Error al enviar datos")
+                    Log.e("HTTP", "Error al enviar datos en ${tiempoRespuesta}ms")
                 }
             }
 
             override fun onFailure(call: Call<Void>, t: Throwable) {
-                Log.e("HTTP", "Fallo en la conexión: ${t.message}")
+                val tiempoFin = System.currentTimeMillis()
+                val tiempoRespuesta = tiempoFin - tiempoInicio
+                Log.e("HTTP", "Fallo en la conexión: ${t.message} - Tiempo: ${tiempoRespuesta}ms")
             }
         })
     }
 
     override fun onLocationChanged(location: Location) {
-        enviarDatos("LOCALIZACION", mapOf("lat" to location.latitude, "lng" to location.longitude, "alt" to location.altitude, "vel" to location.speed))
+        val locationData = JSONObject()
+        locationData.put("lat", location.latitude)
+        locationData.put("lng", location.longitude)
+        locationData.put("alt", location.altitude)
+        locationData.put("vel", location.speed)
+
+        socket?.emit("enviar_localizacion", locationData)
     }
+
 
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}

@@ -2,13 +2,13 @@ package com.example.taller1aruitectura.Sensor
 
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import com.example.taller1aruitectura.Constantes.Companion.URL_HTTP
 
 object RetrofitClient {
-    private const val BASE_URL = "http://192.168.2.6:5000"
 
     val instance: SensorService by lazy {
         val retrofit = Retrofit.Builder()
-            .baseUrl(BASE_URL)
+            .baseUrl(URL_HTTP)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
         retrofit.create(SensorService::class.java)
